@@ -1,16 +1,21 @@
 #!/usr/bin/env node
 
 /**
- * Extract DOM structure, computed styles, and screenshot from a URL.
+ * Extract DOM structure, computed styles, screenshot, and assets from a URL.
  *
- * Usage: node extract-styles.mjs <url> <output-dir>
+ * Usage: node extract-styles.mjs <url> <output-dir> [--viewport WxH]
+ *
+ * Options:
+ *   --viewport WxH   Set viewport size (default: 1280x720). Example: --viewport 390x844
  *
  * Outputs:
- *   - screenshot.png  (full-page screenshot at 2x scale)
- *   - dom.html        (raw DOM HTML)
- *   - layout.json     (structured element tree with computed styles)
+ *   - screenshot.png   (full-page screenshot at 2x scale)
+ *   - dom.html         (raw DOM HTML)
+ *   - layout.json      (structured element tree with computed styles)
+ *   - assets/          (downloaded images, icons, SVGs)
+ *   - assets-map.json  (URL → local path mapping for assets)
  *
- * Requires: playwright (globally installed via `npm install -g playwright`)
+ * Requires: playwright (npm install -D playwright)
  */
 
 import { chromium } from "playwright";
@@ -18,19 +23,31 @@ import { writeFileSync, mkdirSync } from "fs";
 import { join, resolve } from "path";
 
 // ─── Configuration ───────────────────────────────────────────────
-const VIEWPORT = { width: 1280, height: 720 };
+const DEFAULT_VIEWPORT = { width: 1280, height: 720 };
 const DEVICE_SCALE_FACTOR = 2;
 const SETTLE_TIME_MS = 2000;
 const NAVIGATION_TIMEOUT_MS = 30000;
 const MAX_DEPTH = 20;
+const ASSET_DOWNLOAD_TIMEOUT_MS = 5000;
+
+// ─── Parse CLI args ─────────────────────────────────────────────
+function parseViewport(args) {
+  const idx = args.indexOf("--viewport");
+  if (idx !== -1 && args[idx + 1]) {
+    const [w, h] = args[idx + 1].split("x").map(Number);
+    if (w > 0 && h > 0) return { width: w, height: h };
+  }
+  return DEFAULT_VIEWPORT;
+}
 
 // ─── Main ────────────────────────────────────────────────────────
 async function main() {
   const url = process.argv[2];
   const outputDir = resolve(process.argv[3] || "./output");
+  const VIEWPORT = parseViewport(process.argv);
 
   if (!url) {
-    console.error("Usage: node extract-styles.mjs <url> <output-dir>");
+    console.error("Usage: node extract-styles.mjs <url> <output-dir> [--viewport WxH]");
     process.exit(1);
   }
 
@@ -38,6 +55,7 @@ async function main() {
 
   console.log(`🔍 Extracting: ${url}`);
   console.log(`📁 Output:     ${outputDir}`);
+  console.log(`📐 Viewport:   ${VIEWPORT.width}x${VIEWPORT.height}`);
   console.log();
 
   const browser = await chromium.launch({ headless: true });
@@ -45,8 +63,8 @@ async function main() {
   const context = await browser.newContext({
     viewport: VIEWPORT,
     deviceScaleFactor: DEVICE_SCALE_FACTOR,
-    locale: "en-US",
-    timezoneId: "UTC",
+    locale: "ja-JP",
+    timezoneId: "Asia/Tokyo",
     reducedMotion: "reduce",
   });
 
@@ -85,7 +103,53 @@ async function main() {
   // Wait for web fonts
   await page.evaluateHandle(() => document.fonts.ready).catch(() => {});
 
-  // Settle time for any remaining async rendering
+  // ─── Loading Detection ───────────────────────────────────────
+  // Wait for common loading indicators (spinners, skeletons) to disappear
+  console.log("⏳ Waiting for content to finish loading...");
+  await page.waitForFunction(() => {
+    const loadingSelectors = [
+      '[data-loading="true"]', '[data-loading="loading"]',
+      '.loading', '.skeleton', '.spinner',
+      '[aria-busy="true"]', '.placeholder', '.shimmer',
+      '[data-skeleton]', '.lazy-loading', '.is-loading',
+    ];
+    for (const sel of loadingSelectors) {
+      const el = document.querySelector(sel);
+      if (el && el.offsetParent !== null) return false;
+    }
+    return true;
+  }, { timeout: 15000 }).catch(() => {
+    console.log("  ⚠️  Some loading indicators may still be present (timed out)");
+  });
+
+  // Wait for all images to finish loading
+  await page.waitForFunction(() => {
+    const images = Array.from(document.querySelectorAll('img'));
+    return images.length === 0 || images.every(img => img.complete);
+  }, { timeout: 15000 }).catch(() => {
+    console.log("  ⚠️  Some images may not have finished loading");
+  });
+
+  // Scroll to bottom and back to trigger lazy-loaded content
+  console.log("⏳ Scrolling to trigger lazy content...");
+  await page.evaluate(async () => {
+    const step = window.innerHeight;
+    const max = document.body.scrollHeight;
+    for (let y = 0; y < max; y += step) {
+      window.scrollTo(0, y);
+      await new Promise(r => setTimeout(r, 300));
+    }
+    // Scroll back to top
+    window.scrollTo(0, 0);
+  });
+
+  // Wait for lazy-loaded images after scroll
+  await page.waitForFunction(() => {
+    const images = Array.from(document.querySelectorAll('img'));
+    return images.length === 0 || images.every(img => img.complete);
+  }, { timeout: 10000 }).catch(() => {});
+
+  // Final settle time
   await page.waitForTimeout(SETTLE_TIME_MS);
 
   // ─── Screenshot ──────────────────────────────────────────────
@@ -102,7 +166,7 @@ async function main() {
 
   // ─── Style Extraction ────────────────────────────────────────
   console.log("🎨 Extracting styles...");
-  const layoutData = await page.evaluate((maxDepth) => {
+  const layoutData = await page.evaluate(({ maxDepth }) => {
     // Properties to extract per category
     const LAYOUT_PROPS = [
       "display", "position", "boxSizing",
@@ -134,7 +198,8 @@ async function main() {
       "TEMPLATE", "SLOT",
     ]);
 
-    // Build a unique CSS selector path for an element
+    const viewportWidth = window.innerWidth;
+
     function buildSelector(el) {
       if (el === document.body) return "body";
       const parts = [];
@@ -162,7 +227,6 @@ async function main() {
       return "body > " + parts.join(" > ");
     }
 
-    // Get only the direct text content (not from child elements)
     function getDirectText(el) {
       let text = "";
       for (const node of el.childNodes) {
@@ -174,7 +238,6 @@ async function main() {
       return text || undefined;
     }
 
-    // Extract specified CSS properties from computed styles
     function extractStyles(styles, propList) {
       const result = {};
       for (const prop of propList) {
@@ -186,7 +249,6 @@ async function main() {
       return result;
     }
 
-    // Recursively extract an element and its children
     function extractElement(el, depth) {
       if (depth > maxDepth) return null;
       if (SKIP_TAGS.has(el.tagName)) return null;
@@ -194,19 +256,16 @@ async function main() {
       const styles = window.getComputedStyle(el);
       const rect = el.getBoundingClientRect();
 
-      // Skip invisible elements
       if (styles.display === "none") return null;
       if (styles.visibility === "hidden" && el.children.length === 0) return null;
       if (rect.width === 0 && rect.height === 0 && el.children.length === 0) return null;
 
-      // Extract children first
       const children = [];
       for (const child of el.children) {
         const extracted = extractElement(child, depth + 1);
         if (extracted) children.push(extracted);
       }
 
-      // Build node object
       const node = {
         tag: el.tagName.toLowerCase(),
         selector: buildSelector(el),
@@ -222,21 +281,66 @@ async function main() {
         colors: extractStyles(styles, COLOR_PROPS),
       };
 
-      // Optional identification fields
+      // ─── Centering & Sizing Hints ─────────────────────────
+      // Detect centering patterns lost in computed style conversion
+      const hints = {};
+
+      // Get max-width (computed returns "none" if not explicitly set)
+      const computedMaxWidth = styles.getPropertyValue("max-width");
+      if (computedMaxWidth && computedMaxWidth !== "none") {
+        hints.maxWidth = computedMaxWidth;
+      }
+
+      // Detect horizontal centering:
+      // Element width < parent width AND left/right margins are approximately equal
+      const ml = parseFloat(styles.marginLeft) || 0;
+      const mr = parseFloat(styles.marginRight) || 0;
+      const parentEl = el.parentElement;
+      const parentWidth = parentEl ? parentEl.getBoundingClientRect().width : viewportWidth;
+
+      if (rect.width > 0 && rect.width < parentWidth - 1) {
+        const marginDiff = Math.abs(ml - mr);
+        // If left and right margins are both > 0 and nearly equal, it's centered
+        if (ml > 0 && mr > 0 && marginDiff < 5) {
+          hints.centered = true;
+        }
+      }
+
+      // Detect full-width elements (width matches viewport or parent)
+      if (Math.abs(rect.width - viewportWidth) < 2) {
+        hints.fullWidth = true;
+      }
+
+      // Check for percentage or auto width from inline styles or CSS rules
+      // element.style gives inline values; we also check via CSS properties
+      const inlineWidth = el.style.width;
+      const inlineMaxWidth = el.style.maxWidth;
+      const inlineMargin = el.style.margin;
+      if (inlineWidth && (inlineWidth.includes("%") || inlineWidth === "auto")) {
+        hints.cssWidth = inlineWidth;
+      }
+      if (inlineMaxWidth) {
+        hints.cssMaxWidth = inlineMaxWidth;
+      }
+      if (inlineMargin && (inlineMargin.includes("auto"))) {
+        hints.cssMargin = inlineMargin;
+      }
+
+      // Only attach hints if there's something useful
+      if (Object.keys(hints).length > 0) {
+        node.hints = hints;
+      }
+
       if (el.id) node.id = el.id;
       if (el.className && typeof el.className === "string") {
         const classes = el.className.trim().split(/\s+/).filter(Boolean);
         if (classes.length > 0) node.classes = classes;
       }
 
-      // Text content
       const text = getDirectText(el);
       if (text) node.text = text;
-
-      // Children
       if (children.length > 0) node.children = children;
 
-      // Element-specific attributes
       if (el.tagName === "IMG") {
         node.src = el.getAttribute("src");
         node.alt = el.getAttribute("alt") || undefined;
@@ -271,12 +375,144 @@ async function main() {
       extractedAt: new Date().toISOString(),
       tree: extractElement(document.body, 0),
     };
-  }, MAX_DEPTH);
+  }, { maxDepth: MAX_DEPTH });
 
   // ─── Save layout JSON ───────────────────────────────────────
   writeFileSync(
     join(outputDir, "layout.json"),
     JSON.stringify(layoutData, null, 2),
+    "utf-8"
+  );
+
+  // ─── Asset Collection & Download ────────────────────────────
+  console.log("📦 Collecting assets (images, icons, SVGs)...");
+
+  const assetData = await page.evaluate(() => {
+    const assets = [];
+
+    // Collect <img> sources
+    document.querySelectorAll("img").forEach((img) => {
+      if (img.src && !img.src.startsWith("data:")) {
+        assets.push({
+          type: "image",
+          url: img.src,
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+          alt: img.alt || "",
+        });
+      }
+    });
+
+    // Collect favicon
+    const favicons = document.querySelectorAll(
+      'link[rel="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]'
+    );
+    favicons.forEach((link) => {
+      if (link.href) {
+        assets.push({ type: "favicon", url: link.href });
+      }
+    });
+
+    // Collect CSS background images from visible elements
+    const seen = new Set();
+    document.querySelectorAll("*").forEach((el) => {
+      const bg = getComputedStyle(el).backgroundImage;
+      if (bg && bg !== "none" && bg.includes("url(")) {
+        const matches = bg.matchAll(/url\(["']?([^"')]+)["']?\)/g);
+        for (const m of matches) {
+          if (!m[1].startsWith("data:") && !seen.has(m[1])) {
+            seen.add(m[1]);
+            assets.push({ type: "background", url: m[1] });
+          }
+        }
+      }
+    });
+
+    // Collect inline SVGs (as HTML content for saving)
+    document.querySelectorAll("svg").forEach((svg, i) => {
+      // Only save SVGs that look like icons (under 200x200 rendered size)
+      const rect = svg.getBoundingClientRect();
+      if (rect.width > 0 && rect.width <= 200 && rect.height > 0 && rect.height <= 200) {
+        assets.push({
+          type: "svg",
+          content: svg.outerHTML,
+          viewBox: svg.getAttribute("viewBox") || "",
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          index: i,
+        });
+      }
+    });
+
+    return assets;
+  });
+
+  // Download assets
+  const assetsDir = join(outputDir, "assets");
+  mkdirSync(assetsDir, { recursive: true });
+
+  const assetMap = {};
+  const downloadedUrls = new Set();
+  let downloadCount = 0;
+  let svgCount = 0;
+
+  // Save inline SVGs
+  for (const asset of assetData) {
+    if (asset.type === "svg") {
+      const filename = `icon-${asset.index}.svg`;
+      writeFileSync(join(assetsDir, filename), asset.content, "utf-8");
+      assetMap[`svg-${asset.index}`] = {
+        localPath: `assets/${filename}`,
+        viewBox: asset.viewBox,
+        width: asset.width,
+        height: asset.height,
+      };
+      svgCount++;
+    }
+  }
+
+  // Download remote assets (images, favicons, backgrounds)
+  console.log("⬇️  Downloading remote assets...");
+  for (const asset of assetData) {
+    if (asset.type === "svg") continue;
+    if (!asset.url || downloadedUrls.has(asset.url)) continue;
+    downloadedUrls.add(asset.url);
+
+    try {
+      const assetUrl = new URL(asset.url);
+      const pathParts = assetUrl.pathname.split("/");
+      const rawName = pathParts[pathParts.length - 1] || "asset";
+      // Sanitize filename: keep alphanumeric, dots, hyphens, underscores
+      const safeName = rawName
+        .replace(/[^a-zA-Z0-9._-]/g, "_")
+        .slice(0, 120);
+      const filename = safeName || `asset-${downloadCount}`;
+
+      const response = await fetch(asset.url, {
+        signal: AbortSignal.timeout(ASSET_DOWNLOAD_TIMEOUT_MS),
+        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
+      });
+
+      if (response.ok) {
+        const buffer = Buffer.from(await response.arrayBuffer());
+        writeFileSync(join(assetsDir, filename), buffer);
+        assetMap[asset.url] = {
+          localPath: `assets/${filename}`,
+          type: asset.type,
+          width: asset.width,
+          height: asset.height,
+        };
+        downloadCount++;
+      }
+    } catch {
+      // Skip failed downloads silently
+    }
+  }
+
+  // Save asset map
+  writeFileSync(
+    join(outputDir, "assets-map.json"),
+    JSON.stringify(assetMap, null, 2),
     "utf-8"
   );
 
@@ -298,11 +534,14 @@ async function main() {
   console.log(`   Elements extracted: ${nodeCount}`);
   console.log(`   Page title: ${layoutData.title}`);
   console.log(`   Scroll height: ${layoutData.scrollHeight}px`);
+  console.log(`   Assets: ${downloadCount} downloaded, ${svgCount} SVGs saved`);
   console.log();
   console.log("📁 Output files:");
   console.log(`   ${join(outputDir, "screenshot.png")}`);
   console.log(`   ${join(outputDir, "dom.html")}`);
   console.log(`   ${join(outputDir, "layout.json")}`);
+  console.log(`   ${join(outputDir, "assets-map.json")}`);
+  console.log(`   ${join(outputDir, "assets/")} (${downloadCount + svgCount} files)`);
 
   await browser.close();
 }

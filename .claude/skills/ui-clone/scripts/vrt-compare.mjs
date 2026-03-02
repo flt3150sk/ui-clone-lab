@@ -3,11 +3,15 @@
 /**
  * Visual Regression Test — pixel-level screenshot comparison.
  *
- * Usage: node vrt-compare.mjs <source.png> <clone.png> [output-dir]
+ * Usage: node vrt-compare.mjs <source.png> <clone.png> [output-dir] [--suffix name] [--no-open]
+ *
+ * Options:
+ *   --suffix name   Append suffix to output files (e.g., --suffix pc → vrt-diff-pc.png)
+ *   --no-open       Don't auto-open result images
  *
  * Outputs:
- *   - diff.png     (visual diff — red pixels mark differences)
- *   - report.json  (mismatch stats + bounding boxes of diff regions)
+ *   - vrt-diff[-suffix].png     (visual diff — red pixels mark differences)
+ *   - vrt-report[-suffix].json  (mismatch stats + bounding boxes of diff regions)
  *
  * Requires: pixelmatch, pngjs
  *   Install: pnpm add -D pixelmatch pngjs
@@ -15,6 +19,8 @@
 
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { resolve, join } from "path";
+import { execSync } from "child_process";
+import { platform } from "os";
 
 // Dynamic imports for optional dependencies
 async function loadDeps() {
@@ -162,8 +168,12 @@ async function main() {
   const clonePath = process.argv[3];
   const outputDir = resolve(process.argv[4] || "./snapshots/vrt");
 
+  // Parse --suffix flag
+  const suffixIdx = process.argv.indexOf("--suffix");
+  const suffix = suffixIdx !== -1 && process.argv[suffixIdx + 1] ? `-${process.argv[suffixIdx + 1]}` : "";
+
   if (!sourcePath || !clonePath) {
-    console.error("Usage: node vrt-compare.mjs <source.png> <clone.png> [output-dir]");
+    console.error("Usage: node vrt-compare.mjs <source.png> <clone.png> [output-dir] [--suffix name]");
     process.exit(1);
   }
 
@@ -204,7 +214,7 @@ async function main() {
   const mismatchPercent = ((mismatchCount / totalPixels) * 100).toFixed(2);
 
   // Save diff image
-  const diffPath = join(outputDir, "diff.png");
+  const diffPath = join(outputDir, `vrt-diff${suffix}.png`);
   writeFileSync(diffPath, PNG.sync.write(diff));
 
   // Find diff regions
@@ -235,16 +245,18 @@ async function main() {
     timestamp: new Date().toISOString(),
   };
 
+  const reportPath = join(outputDir, `vrt-report${suffix}.json`);
   writeFileSync(
-    join(outputDir, "report.json"),
+    reportPath,
     JSON.stringify(report, null, 2),
     "utf-8"
   );
 
   // Print results
   console.log();
+  const label = suffix ? ` (${suffix.slice(1).toUpperCase()})` : "";
   console.log("═══════════════════════════════════════════");
-  console.log("  VRT Results");
+  console.log(`  VRT Results${label}`);
   console.log("═══════════════════════════════════════════");
   console.log();
   console.log(
@@ -274,8 +286,23 @@ async function main() {
 
   console.log();
   console.log(`  📄 Diff image:  ${diffPath}`);
-  console.log(`  📄 Report:      ${join(outputDir, "report.json")}`);
+  console.log(`  📄 Report:      ${reportPath}`);
   console.log();
+
+  // ─── Auto-open results for viewing ──────────────────────────
+  const shouldOpen = !process.argv.includes("--no-open");
+  if (shouldOpen) {
+    console.log("🖼️  Opening diff image and screenshots for comparison...");
+    try {
+      const openCmd = platform() === "darwin" ? "open" : platform() === "win32" ? "start" : "xdg-open";
+      // Open source, clone, and diff side by side
+      execSync(`${openCmd} "${resolve(sourcePath)}"`, { stdio: "ignore" });
+      execSync(`${openCmd} "${resolve(clonePath)}"`, { stdio: "ignore" });
+      execSync(`${openCmd} "${diffPath}"`, { stdio: "ignore" });
+    } catch {
+      console.log("  ⚠️  Could not auto-open images. Open them manually.");
+    }
+  }
 }
 
 main().catch((err) => {

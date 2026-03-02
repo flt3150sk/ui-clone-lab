@@ -85,6 +85,85 @@ src/app/
 
 ---
 
+## センタリングとレスポンシブの復元
+
+抽出データは `getComputedStyle()` から取得するため、`margin: 0 auto` や `max-width` などの相対的な指定が固定ピクセル値に変換されている。実装時にこれらを復元しないと、コンテンツが左端に寄った固定レイアウトになってしまう。
+
+### hintsフィールドの活用
+
+`layout.json` の各ノードには `hints` フィールドが付与される場合がある：
+
+```json
+{
+  "tag": "div",
+  "rect": { "width": 1152, "height": 2400 },
+  "hints": {
+    "centered": true,
+    "maxWidth": "1152px"
+  }
+}
+```
+
+| hint | 意味 | 実装方法 |
+|---|---|---|
+| `centered: true` | 左右マージンが等しく、親より狭い → 中央配置 | `mx-auto` を使う |
+| `maxWidth` | CSSの `max-width` が明示的に設定されている | `max-w-[値]` を使う |
+| `fullWidth: true` | ビューポート幅と同じ | `w-full` を使う |
+| `cssWidth` | インラインstyleに `%` や `auto` の幅指定 | 固定値の代わりにその値を使う |
+| `cssMaxWidth` | インラインstyleに `max-width` 指定 | `max-w-[値]` を使う |
+| `cssMargin` | インラインstyleに `auto` を含むmargin | `mx-auto` を使う |
+
+### 復元ルール
+
+**ルール1：`hints.centered` が true の要素は `mx-auto` を付ける**
+
+```tsx
+// NG: 固定ピクセルのみ → 左寄りになる
+<div className="w-[1152px]">
+
+// OK: max-width + 中央配置を復元
+<div className="max-w-[1152px] w-full mx-auto">
+```
+
+**ルール2：ビューポート幅と同じ要素は `w-full` を使う**
+
+`hints.fullWidth: true` の場合、`w-[1280px]` ではなく `w-full` を使う。
+
+**ルール3：コンテンツラッパーは `max-w-[Xpx]` + `mx-auto`**
+
+ページの主要なコンテンツ領域（bodyの直接の子でビューポートより狭い要素）は、ほぼ確実に `max-width` + `margin: 0 auto` のパターンを使っている：
+
+```tsx
+// 典型的なパターン
+<div className="max-w-[1200px] mx-auto px-[24px]">
+  {/* コンテンツ */}
+</div>
+```
+
+**ルール4：固定グリッドも中央配置を考慮する**
+
+gridレイアウトの合計幅がビューポートより狭い場合、グリッドコンテナを中央に配置する：
+
+```tsx
+// NG: グリッドが左寄り
+<div style={{ gridTemplateColumns: '248px 604px 300px' }}>
+
+// OK: グリッドコンテナを中央配置
+<div className="max-w-[1152px] mx-auto" style={{ display: 'grid', gridTemplateColumns: '248px 604px 300px' }}>
+```
+
+### hintsがない場合のヒューリスティック
+
+hintsが付与されていなくても、以下の場合はセンタリングを推定できる：
+
+1. `rect.width` がビューポート幅（1280px）より明らかに狭い（100px以上差がある）
+2. `rect.x` が0より大きい（左端から離れている）
+3. `rect.x ≈ (viewportWidth - rect.width) / 2`（中央に位置している）
+
+これらが該当する場合は `max-w-[{rect.width}px] mx-auto` を使う。
+
+---
+
 ## Building the Page
 
 ### Step 1: Set Up Fonts
@@ -347,11 +426,42 @@ These aren't captured in computed styles and need manual inspection.
 </div>
 ```
 
-### Responsive (if source is responsive)
+### レスポンシブ実装（PC+SP デュアルビューポート）
 
-Use breakpoints only after achieving desktop match:
+PC版（`source-pc/layout.json`）とSP版（`source-sp/layout.json`）の両方の抽出データを参照して、1つの`page.tsx`でレスポンシブ対応する。
+
+**モバイルファーストで記述し、`md:`でPC版を上書き：**
+
 ```tsx
-<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-[24px]">
+// SP版の値をデフォルトに、PC版を md: で上書き
+<div className="flex-col md:flex-row gap-[16px] md:gap-[24px] px-[16px] md:px-[32px]">
+```
+
+**構造が大きく変わる場合は出し分ける：**
+
+```tsx
+{/* SPではハンバーガーメニュー */}
+<button className="block md:hidden">☰</button>
+
+{/* PCではナビゲーションバー */}
+<nav className="hidden md:flex items-center gap-[24px]">
+  <a href="#">Link 1</a>
+  <a href="#">Link 2</a>
+</nav>
+```
+
+**カラム数の切り替え：**
+
+```tsx
+{/* SP: 1カラム → PC: 3カラム */}
+<div className="grid grid-cols-1 md:grid-cols-3 gap-[16px] md:gap-[24px]">
+```
+
+**サイズの切り替え：**
+
+```tsx
+{/* SP: フォントサイズ24px → PC: 48px */}
+<h1 className="text-[24px] md:text-[48px] font-bold leading-[32px] md:leading-[56px]">
 ```
 
 ### Button

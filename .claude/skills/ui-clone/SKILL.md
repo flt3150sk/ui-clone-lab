@@ -1,167 +1,209 @@
 ---
 name: ui-clone
-description: "Clone and reproduce web UIs pixel-perfectly from URLs using Playwright-based extraction and automated comparison. Use this skill whenever: (1) the user provides a web URL and wants to recreate/clone/reproduce its UI in Next.js + Tailwind CSS, (2) the user mentions UI cloning, website reproduction, pixel-perfect matching, or visual regression testing, (3) the user wants to compare their implementation against a reference URL, or (4) the user pastes a URL and says 'clone this', 'reproduce this', 'make this in Next.js', etc. Even partial triggers like 'this URL looks nice, can you build it?' should activate this skill."
+description: "WebのUIをURLからPlaywrightで自動抽出し、Next.js + Tailwind CSSでピクセルパーフェクトに再現するスキル。以下の場合に必ずこのスキルを使用すること：(1) ユーザーがWebのURLを提示し、そのUIをNext.js + Tailwind CSSで再現・クローンしたい場合、(2) UIクローン、Webサイト再現、ピクセルパーフェクト、VRT（Visual Regression Testing）に言及した場合、(3) 実装をリファレンスURLと比較したい場合、(4)「このURLをクローンして」「これをNext.jsで作って」「このサイトを再現して」のような指示の場合。「このサイトいい感じだね、作れる？」のような間接的なトリガーでも発動すること。"
 ---
 
 # UI Clone
 
-Clone any web UI from a URL into pixel-perfect Next.js + Tailwind CSS code through automated extraction, structured comparison, and iterative repair.
+WebのURLから、自動抽出・構造比較・反復修正を通じて、ピクセルパーフェクトなNext.js + Tailwind CSSコードを生成する。
 
-## Core Philosophy
+## 基本思想
 
-The order is: **reproduce first, stabilize, then abstract.**
+順序は：**まず再現、次に安定化、最後に抽象化。**
 
-Don't try to write "clean CSS" upfront. Get the pixels matching first, verify with data, then refactor. Arbitrary Tailwind values (`[16px]`, `[rgb(34,34,34)]`) are perfectly fine during reproduction — swap them for semantic tokens only after visual parity is confirmed.
+最初から「きれいなCSS」を書こうとしない。まずピクセルを合わせ、データで検証し、それからリファクタリングする。再現中はTailwindの任意値（`[16px]`、`[rgb(34,34,34)]`）で全く問題ない。視覚的一致が確認できてからセマンティックトークンに置き換える。
 
-## Priority Order
+## 優先順位
 
-When fixing differences, always work in this order:
-1. **Layout** (display, position, sizing, spacing, flex/grid) — most impactful, causes cascading issues
-2. **Typography** (font-family, size, weight, line-height) — highly visible
-3. **Colors** (text, background, border colors) — noticeable but non-structural
-4. **Details** (shadows, opacity, border-radius fine-tuning) — last mile
+差分修正は必ずこの順序で行う：
+1. **レイアウト**（display, position, サイズ, 余白, flex/grid）— 影響が最も大きく、子要素にも波及する
+2. **タイポグラフィ**（font-family, size, weight, line-height）— 視覚的に目立つ
+3. **色**（テキスト色, 背景色, ボーダー色）— 目立つが構造的ではない
+4. **細部**（影, 透明度, border-radiusの微調整）— 最終仕上げ
 
-## Prerequisites
+## 前提条件
 
-Before starting, verify:
-- Playwright is installed globally: `npm ls -g playwright`
-- Node.js 18+ is available
-- The project is a Next.js app with Tailwind CSS
+開始前に以下を確認：
+- Playwrightがグローバルインストール済み：`npm ls -g playwright`
+- Node.js 18以上
+- Next.js + Tailwind CSSのプロジェクト
 
-For VRT (Phase 4), install these dev dependencies:
+VRT（Phase 4）には以下のdev dependenciesが必要：
 ```bash
 pnpm add -D pixelmatch pngjs
 ```
 
-## Workflow Overview
+## ワークフロー概要
 
 ```
-URL → Extract Source → Implement in Next.js → Extract Clone → JSON Diff → Fix → Re-extract → ... → Pixel Match → Done
+URL → PC+SP抽出 → レスポンシブ実装 → PC+SPクローン抽出 → JSON差分 → 修正 → 再抽出 → ... → PC+SPピクセル比較 → 完了
 ```
 
-The process has 6 phases. Phases 0-1 capture the "truth". Phase 2 builds the implementation. Phase 3 is the iterative repair loop (the core). Phase 4 is final pixel verification. Phase 5 is optional cleanup.
+全6フェーズ。Phase 0-1で「真実」をPC・SP両方で取得。Phase 2でレスポンシブ対応の1つのpage.tsxを実装。Phase 3が反復修正ループ（コア）。Phase 4がPC・SP両方の最終ピクセル検証。Phase 5は任意のクリーンアップ。
 
 ---
 
-## Phase 0: VRT Stabilization
+## Phase 0：VRT安定化
 
-**Purpose:** Ensure consistent, reproducible captures across runs.
+**目的：** 実行間で一貫した再現可能なキャプチャを保証する。
 
-The extraction script (`scripts/extract-styles.mjs`) handles stabilization automatically:
-- Viewport fixed at 1280x720
-- deviceScaleFactor fixed at 2
-- All CSS animations and transitions disabled
-- `networkidle` wait + 2s settle time
-- `reducedMotion: 'reduce'` context setting
-- Caret hidden to prevent cursor blink artifacts
+抽出スクリプト（`scripts/extract-styles.mjs`）が自動的に安定化を行う：
+- ビューポート：PC 1280x720 / SP 390x844（`--viewport WxH`で指定）
+- deviceScaleFactor固定：2
+- ブラウザロケール：`ja-JP`、タイムゾーン：`Asia/Tokyo`（日本語コンテンツの正確な表示のため）
+- CSSアニメーション・トランジション全無効化
+- `networkidle`待機 + 2秒の安定時間
+- `reducedMotion: 'reduce'`コンテキスト設定
+- カーソル点滅アーティファクト防止のためキャレット非表示
+- **ローディング検出** — 一般的なローディング表示（`.loading`、`.skeleton`、`.spinner`、`[aria-busy="true"]`）の消滅を自動待機
+- **遅延コンテンツトリガー** — ページを段階的にスクロールして遅延読み込みの画像・コンテンツを発火させ、全画像の読み込み完了を待機
+- **Webフォント待機** — 抽出前に`document.fonts.ready`を待機
 
-### Custom Stabilization
+### カスタム安定化
 
-If the target page requires special handling:
+対象ページに特別な処理が必要な場合：
 
-**Login/Auth:** Add cookie injection or login steps before extraction:
+**ログイン/認証：** 抽出前にCookieインジェクションやログインステップを追加：
 ```javascript
-// Add to extract-styles.mjs before page.goto()
+// extract-styles.mjsのpage.goto()前に追加
 await context.addCookies([{ name: 'session', value: '...', domain: '...' }]);
 ```
 
-**Lazy content:** Add scroll-to-bottom before capture:
-```javascript
-await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-await page.waitForTimeout(2000);
-await page.evaluate(() => window.scrollTo(0, 0));
-```
-
-**Web fonts:** Wait for fonts to load:
-```javascript
-await page.evaluateHandle(() => document.fonts.ready);
-```
+**ロケール変更：** デフォルトは`ja-JP`。変更する場合は`extract-styles.mjs`のブラウザコンテキストオプションで`locale`と`timezoneId`を編集する。
 
 ---
 
-## Phase 1: Extract Source of Truth
+## Phase 1：ソースオブトゥルースの抽出
 
-Run the extraction script on the target URL:
+対象URLに対して、PC幅とSP幅の両方で抽出スクリプトを実行：
 
 ```bash
-node .claude/skills/ui-clone/scripts/extract-styles.mjs <url> ./snapshots/source
+# PC版（1280x720）
+node .claude/skills/ui-clone/scripts/extract-styles.mjs <url> ./snapshots/source-pc
+
+# SP版（390x844）
+node .claude/skills/ui-clone/scripts/extract-styles.mjs <url> ./snapshots/source-sp --viewport 390x844
 ```
 
-This produces three files:
-| File | Purpose |
+各出力ディレクトリに以下が生成される：
+| ファイル | 用途 |
 |---|---|
-| `screenshot.png` | Full-page screenshot (visual reference + Phase 4 input) |
-| `dom.html` | Raw DOM HTML (structure reference) |
-| `layout.json` | Computed styles tree (Source of Truth for Phase 3) |
+| `screenshot.png` | フルページスクリーンショット（視覚リファレンス + Phase 4の入力） |
+| `dom.html` | 生のDOM HTML（構造リファレンス） |
+| `layout.json` | 算出スタイルツリー（Phase 3のソースオブトゥルース） |
+| `assets/` | ページからダウンロードした画像、ファビコン、SVG |
+| `assets-map.json` | 元のURL → ローカルファイルパスのマッピング |
 
-### Analyzing the Extracted Data
+### アセットダウンロード
 
-After extraction, read `layout.json` and identify:
+抽出スクリプトはページのビジュアルアセットを自動ダウンロードする：
+- `<img>`要素（srcとsrcset）
+- ファビコン・タッチアイコン
+- CSS `background-image` URL
+- インラインSVG（小アイコン ≤ 200px）
 
-1. **Page regions** — Header, hero, content sections, sidebar, footer
-2. **Layout patterns** — Which containers use flex vs grid, absolute positioning
-3. **Component boundaries** — Repeated structures that should become React components
-4. **Typography system** — Distinct font-size/weight/family combinations in use
-5. **Color palette** — All unique colors (group similar ones)
+全アセットは`<output-dir>/assets/`にURLパスベースのファイル名で保存される。`assets-map.json`は各元URLとローカルパスのマッピングを提供し、実装時のアセット参照を容易にする。
 
-See `references/extraction-schema.md` for the full JSON schema.
+### 抽出データの分析
+
+抽出後、PC版（`source-pc/layout.json`）とSP版（`source-sp/layout.json`）の両方を読んで以下を特定する：
+
+1. **ページ領域** — ヘッダー、ヒーロー、コンテンツセクション、サイドバー、フッター
+2. **レイアウトパターン** — flex/grid/absolute positioningの使い分け
+3. **コンポーネント境界** — Reactコンポーネントにすべき繰り返し構造
+4. **タイポグラフィ体系** — 使用されているfont-size/weight/familyの組み合わせ
+5. **カラーパレット** — 全ユニーク色（類似色をグループ化）
+
+JSONスキーマの詳細は`references/extraction-schema.md`を参照。
 
 ---
 
-## Phase 2: Next.js Implementation
+## Phase 2：Next.js実装
 
-Build the page based on extracted data. Read `references/implementation-guide.md` for detailed guidance.
+抽出データに基づいてページを構築する。詳細は`references/implementation-guide.md`を参照。
 
-### Key Principles
+### 基本原則
 
-1. **Match the DOM hierarchy** — Keep your component tree similar to the source structure. If the source has `header > nav > ul > li`, build it similarly.
+1. **DOM階層を合わせる** — ソースの構造に近いコンポーネントツリーを維持する。ソースが`header > nav > ul > li`なら、同様に構築する。
 
-2. **Use exact values first** — Use Tailwind arbitrary values for exact pixel matching:
+2. **センタリングを復元する** — 抽出データの `hints` フィールドを確認し、中央配置を復元する。`getComputedStyle` は `margin: 0 auto` を固定ピクセル値に変換してしまうため、これを行わないとコンテンツが左端に寄る：
    ```jsx
-   // Good: exact match first
+   // NG: 固定幅のみ → 左端に寄る
+   <div className="w-[1152px]">
+
+   // OK: hints.centered=true の場合 → max-width + 中央配置
+   <div className="max-w-[1152px] w-full mx-auto">
+   ```
+   詳細は `references/implementation-guide.md` の「センタリングとレスポンシブの復元」セクションを参照。
+
+3. **まず正確な値を使う** — ピクセル単位の一致にはTailwindの任意値を使用：
+   ```jsx
+   // Good: まず正確な値で一致させる
    <div className="w-[1200px] px-[24px] py-[16px] text-[14px] text-[rgb(51,51,51)]">
    ```
 
-3. **Work section-by-section** — Don't try to build the entire page at once. Build header, verify it, then move to the next section.
+4. **セクション単位で作業する** — ページ全体を一度に構築しない。ヘッダーを作り、確認し、次のセクションへ進む。
 
-4. **Handle images** — For images, either:
-   - Download source images to `public/` and reference them
-   - Use placeholder images with matching dimensions
-   - Use `next/image` with the source URL (if CORS allows)
+5. **画像の処理** — Phase 1でダウンロードしたアセットを使用する：
+   - `snapshots/source/assets/`から`public/assets/`に画像をコピー
+   - `assets-map.json`で元URLとローカルパスを対応付け
+   - `next/image`または`<img>`タグで`/assets/<filename>`を参照
+   - ダウンロードに失敗した画像は、同じサイズのプレースホルダーを使用
 
-5. **Handle fonts** — Check what fonts the source uses (from `typography.fontFamily` in layout.json) and load them via `next/font` or CDN.
+6. **フォントの処理** — ソースが使用するフォント（layout.jsonの`typography.fontFamily`）を確認し、`next/font`またはCDNで読み込む。
 
-### After Implementation
+### レスポンシブ実装
 
-Start your dev server and extract the clone:
+コードは1つの`page.tsx`でPC・SP両方に対応する。PC版とSP版の`layout.json`を両方参照し、Tailwindのレスポンシブプレフィックスで切り替える：
+
+```jsx
+// PC版の値をデフォルトに、SP版の値をベースに記述
+<div className="flex-col md:flex-row gap-[16px] md:gap-[24px] px-[16px] md:px-[32px]">
+```
+
+**ブレークポイント戦略：**
+- SP版の値をモバイルファースト（デフォルト）で記述
+- PC版の値を`md:`（768px以上）プレフィックスで記述
+- PC/SPで構造が大きく変わる場合（例：ハンバーガーメニュー vs ナビゲーションバー）は`hidden md:block`/`block md:hidden`で切り替える
+
+### 実装後
+
+開発サーバーを起動してPC版・SP版の両方でクローンを抽出：
 
 ```bash
-# Terminal 1: Start dev server
+# ターミナル1：開発サーバー起動
 pnpm dev
 
-# Terminal 2: Extract clone
-node .claude/skills/ui-clone/scripts/extract-styles.mjs http://localhost:3000/<path> ./snapshots/clone
+# ターミナル2：クローン抽出（PC + SP）
+node .claude/skills/ui-clone/scripts/extract-styles.mjs http://localhost:3000/<path> ./snapshots/clone-pc
+node .claude/skills/ui-clone/scripts/extract-styles.mjs http://localhost:3000/<path> ./snapshots/clone-sp --viewport 390x844
 ```
 
 ---
 
-## Phase 3: AI Repair Loop
+## Phase 3：AI修復ループ
 
-This is the core of the process. Use structured JSON comparison — not images — for iterative fixing.
+これがプロセスの核心。画像ではなく、構造化されたJSON比較を使って反復修正する。
 
-### Run Comparison
+### 比較の実行
+
+PC版とSP版の両方で比較を実行する：
 
 ```bash
-node .claude/skills/ui-clone/scripts/compare-layouts.mjs ./snapshots/source ./snapshots/clone --output ./snapshots/diff.json
+# PC版の比較
+node .claude/skills/ui-clone/scripts/compare-layouts.mjs ./snapshots/source-pc ./snapshots/clone-pc --output ./snapshots/diff-pc.json
+
+# SP版の比較
+node .claude/skills/ui-clone/scripts/compare-layouts.mjs ./snapshots/source-sp ./snapshots/clone-sp --output ./snapshots/diff-sp.json
 ```
 
-The script outputs:
-- **Console summary** — Quick overview of match/mismatch counts by category
-- **diff.json** — Full structured diff with per-element property comparisons
+スクリプトの出力（各ビューポートごと）：
+- **コンソールサマリー** — カテゴリ別の一致/不一致数の概要
+- **diff.json** — 要素ごとのプロパティ比較を含む構造化差分
 
-### Reading the Diff
+### 差分の読み方
 
-The diff contains matched elements with property differences, sorted by severity:
+差分にはマッチした要素のプロパティ差分が重要度順にソートされて含まれる：
 
 ```json
 {
@@ -177,95 +219,131 @@ The diff contains matched elements with property differences, sorted by severity
 }
 ```
 
-### Fix Strategy
+### 修正戦略
 
-1. **Fix layout/rect diffs first** — They cause cascading position shifts in child elements
-2. **Fix one section at a time** — Changing a parent's padding affects all children's positions
-3. **Re-extract after each batch of fixes** — Don't accumulate fixes blindly
-4. **Ignore sub-threshold diffs** — The script uses tolerance thresholds (2px for position, 5 for RGB channels)
+1. **レイアウト/rect差分を最初に修正** — 子要素の位置ずれが連鎖するため
+2. **セクション単位で修正** — 親のpadding変更は全子要素の位置に影響する
+3. **修正バッチごとに再抽出** — 修正を盲目的に積み重ねない
+4. **閾値以下の差分は無視** — スクリプトは許容閾値を使用（位置2px、RGBチャンネル5）
 
-### Loop Process
+### ループの流れ
 
 ```
-Read diff → Fix highest-priority diffs → Re-extract clone → Re-compare → Check improvement → Repeat
+PC差分 + SP差分読み込み → 最優先の差分を修正 → PC/SP両方で再抽出 → 再比較 → 改善確認 → 繰り返し
 ```
 
-Typically takes 3-5 iterations to reach minimal diff. Stop when:
-- Layout diffs are all within tolerance
-- Typography matches
-- Colors are close (exact RGB match isn't always possible due to rendering differences)
+**注意：** 修正は1つの`page.tsx`に対して行い、TailwindのレスポンシブプレフィックスでPC/SPを切り替える。PC側の修正が`md:`プレフィックス付き、SP側がデフォルト値になることが多い。
+
+通常3〜5回の反復で最小差分に到達する。以下の場合に停止：
+- PC/SP両方でレイアウト差分が全て許容範囲内
+- タイポグラフィが一致
+- 色が近い（レンダリング差異によりRGB完全一致は常に可能とは限らない）
 
 ---
 
-## Phase 4: VRT Final Verification
+## Phase 4：VRT最終検証
 
-After Phase 3 achieves minimal JSON diff, do pixel-level comparison:
+Phase 3でJSON差分が最小になった後、PC版・SP版の両方でピクセルレベルの比較を実行。**VRT結果はページと同じディレクトリに出力する：**
 
 ```bash
-node .claude/skills/ui-clone/scripts/vrt-compare.mjs ./snapshots/source/screenshot.png ./snapshots/clone/screenshot.png ./snapshots/vrt
+# PC版 VRT
+node .claude/skills/ui-clone/scripts/vrt-compare.mjs \
+  ./snapshots/source-pc/screenshot.png ./snapshots/clone-pc/screenshot.png \
+  src/app/<path> --suffix pc
+
+# SP版 VRT
+node .claude/skills/ui-clone/scripts/vrt-compare.mjs \
+  ./snapshots/source-sp/screenshot.png ./snapshots/clone-sp/screenshot.png \
+  src/app/<path> --suffix sp
 ```
 
-Outputs:
-- `diff.png` — Visual diff (red pixels = differences)
-- `report.json` — Mismatch statistics with bounding boxes
+出力（`src/app/<path>/` に保存される）：
+- `vrt-diff-pc.png` — PC版の視覚的差分（赤いピクセル = 差異箇所）
+- `vrt-report-pc.json` — PC版の不一致統計とバウンディングボックス
+- `vrt-diff-sp.png` — SP版の視覚的差分
+- `vrt-report-sp.json` — SP版の不一致統計とバウンディングボックス
 
-### Interpreting Results
+スクリプトはソースのスクリーンショット、クローンのスクリーンショット、差分画像を自動的に開いて横並び比較できる（macOS `open`、Linux `xdg-open`）。`--no-open`で無効化可能。
 
-| Mismatch % | Status | Action |
+> **注意：** `snapshots/` 内の中間ファイル（抽出データ、DOM、スクリーンショット等）は `.gitignore` で除外される。gitにコミットされるのはページ実装（`page.tsx`）とVRT結果のみ。
+
+### 結果の解釈
+
+| 不一致率 | ステータス | アクション |
 |---|---|---|
-| < 1% | Excellent | Near pixel-perfect — likely just font rendering |
-| 1-5% | Good | Check diff.png for remaining issues |
-| > 5% | Needs work | Go back to Phase 3 with diff regions as guidance |
+| < 1% | 優秀 | ほぼピクセルパーフェクト — フォントレンダリング差異程度 |
+| 1-5% | 良好 | diff.pngで残りの問題を確認 |
+| > 5% | 要改善 | diff領域をガイドにPhase 3へ戻る |
 
-If specific regions show mismatch, extract their bounding boxes from `report.json` and focus fixes on those areas.
+特定の領域で不一致がある場合、`report.json`からバウンディングボックスを抽出し、その箇所に集中して修正する。
 
 ---
 
-## Phase 5: Design Cleanup (Optional)
+## Phase 5：デザイン整理（任意）
 
-After achieving visual parity, optionally improve code quality:
+視覚的一致を達成した後、任意でコード品質を改善：
 
-1. **Design token extraction** — Cluster similar colors/spacing values into CSS variables or Tailwind theme extensions
-2. **Tailwind normalization** — Replace arbitrary values with standard Tailwind classes where they match (e.g., `p-[16px]` → `p-4`)
-3. **Component extraction** — Factor repeated patterns into reusable React components
-4. **Responsive handling** — Add breakpoints if the source is responsive
+1. **デザイントークン抽出** — 類似の色/spacing値をCSS変数やTailwindテーマ拡張にクラスタリング
+2. **Tailwind正規化** — 任意値を標準Tailwindクラスに置換（例：`p-[16px]` → `p-4`）
+3. **コンポーネント抽出** — 繰り返しパターンを再利用可能なReactコンポーネントに分離
+4. **レスポンシブ対応** — ソースがレスポンシブならブレークポイントを追加
 
-**Always re-run Phase 4 after refactoring** to ensure no visual regressions.
+**リファクタリング後は必ずPhase 4を再実行**して、視覚的リグレッションがないことを確認する。
 
 ---
 
-## Script Reference
+## 最終出力構造
 
-| Script | Purpose | Usage |
+スキルの最終成果物として、以下がgitにコミットされる：
+
+```
+src/app/<path>/
+├── page.tsx            # 実装したページ（PC+SPレスポンシブ対応）
+├── layout.tsx          # (必要な場合) フォント等のレイアウト設定
+├── vrt-diff-pc.png     # PC版ピクセル差分画像（赤=差異箇所）
+├── vrt-report-pc.json  # PC版不一致率・差分領域レポート
+├── vrt-diff-sp.png     # SP版ピクセル差分画像
+└── vrt-report-sp.json  # SP版不一致率・差分領域レポート
+public/assets/<path>/
+└── ...                 # ダウンロードした画像・アイコン
+```
+
+中間ファイル（`snapshots/`内の抽出データ、DOM、スクリーンショット等）は`.gitignore`で除外される。
+
+---
+
+## スクリプトリファレンス
+
+| スクリプト | 用途 | 使い方 |
 |---|---|---|
-| `scripts/extract-styles.mjs` | Extract screenshot + DOM + styles from URL | `node <script> <url> <output-dir>` |
-| `scripts/compare-layouts.mjs` | Compare two layout.json files | `node <script> <source-dir> <clone-dir> [--output diff.json]` |
-| `scripts/vrt-compare.mjs` | Pixel-level screenshot comparison | `node <script> <source.png> <clone.png> [output-dir]` |
+| `scripts/extract-styles.mjs` | URLからスクリーンショット+DOM+スタイル+アセットを抽出 | `node <script> <url> <output-dir> [--viewport WxH]` |
+| `scripts/compare-layouts.mjs` | 2つのlayout.jsonを比較 | `node <script> <source-dir> <clone-dir> [--output diff.json]` |
+| `scripts/vrt-compare.mjs` | ピクセルレベルのスクリーンショット比較（結果自動表示） | `node <script> <source.png> <clone.png> [output-dir] [--suffix name] [--no-open]` |
 
-## Reference Files
+## リファレンスファイル
 
-| File | When to read |
+| ファイル | 読むタイミング |
 |---|---|
-| `references/extraction-schema.md` | Understanding the layout.json structure and all extracted properties |
-| `references/implementation-guide.md` | Detailed guidance for translating extracted data to Next.js + Tailwind |
+| `references/extraction-schema.md` | layout.jsonの構造と全抽出プロパティを理解する時 |
+| `references/implementation-guide.md` | 抽出データをNext.js + Tailwindに変換する詳細ガイダンスが必要な時 |
 
-## Troubleshooting
+## トラブルシューティング
 
-### Extraction fails or hangs
-- Check if the URL is accessible: `curl -I <url>`
-- Increase timeout: Edit `extract-styles.mjs` timeout parameter
-- Try with `headless: false` to see what's happening
+### 抽出が失敗またはハングする
+- URLがアクセス可能か確認：`curl -I <url>`
+- タイムアウトを延長：`extract-styles.mjs`のtimeoutパラメータを編集
+- `headless: false`で実行して状況を確認
 
-### Too many diffs in comparison
-- Fix parent elements first — child diffs often auto-resolve
-- Check if the clone has extra wrapper divs changing the depth
-- Ensure both pages use the same viewport
+### 比較で差分が多すぎる
+- 親要素を先に修正 — 子要素の差分は自動解消されることが多い
+- クローンに余分なラッパーdivがないか確認（深さが変わる）
+- 両方のページが同じビューポートを使用していることを確認
 
-### Font rendering differences
-- Use the same web fonts as the source (not system fonts)
-- Load fonts via `next/font` for optimal rendering
-- Some sub-pixel differences are unavoidable — accept < 1% mismatch
+### フォントレンダリングの差異
+- ソースと同じWebフォントを使用（システムフォントではなく）
+- `next/font`でフォントを読み込み、最適なレンダリングを確保
+- サブピクセルの差異は避けられない場合がある — 1%未満の不一致は許容
 
-### Dynamic content differences
-- Mock or fix dynamic content (dates, counters) before capture
-- Use the same data/state for both captures
+### 動的コンテンツの差異
+- キャプチャ前に動的コンテンツ（日付、カウンターなど）をモックまたは固定
+- 両方のキャプチャで同じデータ/状態を使用

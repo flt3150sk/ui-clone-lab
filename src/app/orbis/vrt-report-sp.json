@@ -1,0 +1,15 @@
+{
+  "source": {
+    "width": 780,
+    "height": 33642
+  },
+  "clone": {
+    "width": 780,
+    "height": 32206
+  },
+  "comparison": {
+    "width": 780,
+    "height": 32206,
+    "mismatchPercent": 25.41
+  }
+}
