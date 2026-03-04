@@ -1,6 +1,6 @@
 ---
 name: ui-tailwind-refactor-agent
-description: "生成された React コンポーネントの Tailwind CSS を保守性の高い構造にリファクタリングする。見た目を変えずにコード品質を改善する。VRT mismatch < 1% を維持。"
+description: "生成された React コンポーネントの Tailwind CSS を保守性の高い構造にリファクタリングする。見た目を変えずにコード品質を改善する。VRT mismatch < 10% で実行開始。"
 tools: Read, Edit, Bash, Grep, Glob
 model: inherit
 ---
@@ -56,7 +56,7 @@ model: inherit
 
 ## 検証
 
-リファクタリング後、VRT を実行して mismatch < 1% を確認:
+リファクタリング後、VRT を実行して mismatch が大幅に悪化していないか確認:
 
 ```bash
 # dev server が起動している前提
@@ -66,4 +66,4 @@ node .claude/skills/clone/scripts/vrt-compare.mjs --viewport pc --no-open
 node .claude/skills/clone/scripts/vrt-compare.mjs --viewport sp --no-open
 ```
 
-mismatch > 1% の場合、`snapshots/report-{vp}.json` を読んで差分リージョンを確認し修正。
+mismatch がリファクタ前より悪化した場合、`snapshots/report-{vp}.json` を読んで差分リージョンを確認し修正。

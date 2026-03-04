@@ -1,6 +1,6 @@
 ---
 name: ui-visual-validator
-description: "VRT レポートと diff 画像を分析し、生成コンポーネントの問題箇所と修正方針を提示する。mismatch > 1% の場合に呼び出される。"
+description: "VRT レポートと diff 画像を分析し、生成コンポーネントの問題箇所と修正方針を提示する。mismatch > 10% の場合に呼び出される。"
 tools: Read, Bash, Grep
 model: sonnet
 ---

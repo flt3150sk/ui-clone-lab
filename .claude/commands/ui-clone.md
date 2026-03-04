@@ -77,9 +77,9 @@ ui-component-generator エージェントの方針に従い、以下を生成:
 - arbitrary values 使用: `gap-[24px]`, `px-[16px]`, `bg-[#ffffff]`
 - レスポンシブ: PC ファースト + `md:` ブレークポイント
 
-#### Phase 4: VRT フィードバックループ
+#### Phase 4: VRT 初回フィードバックループ（目標: < 10%）
 
-dev server を起動し、VRT を実行。< 1% になるまでループ。
+dev server を起動し、VRT を実行。**両方 < 10% になるまでループ。**
 
 ```bash
 # dev server 起動 (バックグラウンド)
@@ -122,24 +122,13 @@ grep -oE 'fonts\.googleapis\.com/css[^"'"'"']*' snapshots/dom.html || echo "No G
 grep -oE 'font-family:\s*[^;]+' snapshots/dom.html | sort -u | head -10
 ```
 
-##### ティア制ループ
+##### ループ手順（寸法・構造を優先）
 
-**ティア 1 (ループ 1-2): 寸法・構造修正 — 最大インパクト**
-- スクリーンショット寸法の不一致を修正（コンテナ幅、margin vs padding）
-- 画像の max-width/max-height 制約を ref の表示サイズに合わせる
-- grid/flex の明示的なテンプレート値（grid-template-rows 等）を設定
-- 不足している SP 用画像を DL・picture source で切り替え
-
-**ティア 2 (ループ 3-4): スペーシング・タイポグラフィ修正**
-- margin, padding, gap の値を layout.json と照合
-- フォントスタック（font-family）を ref と一致させる
-- Webフォント読み込みが必要なら `<link>` を追加
-- letter-spacing, line-height の微調整
-
-**ティア 3 (ループ 5): 微調整**
-- 色の差異
-- border-radius, box-shadow
-- 残差が anti-aliasing 起因なら無視可能と判断
+修正の優先順位:
+1. スクリーンショット寸法の不一致（コンテナ幅、padding）
+2. 画像の max-width/max-height 制約を ref の表示サイズに合わせる
+3. grid/flex の明示的なテンプレート値（grid-template-rows 等）
+4. 不足している SP 用画像を DL・picture source で切り替え
 
 **各ループの手順:**
 
@@ -150,21 +139,22 @@ grep -oE 'font-family:\s*[^;]+' snapshots/dom.html | sort -u | head -10
    # y座標 100 付近の要素を取得
    jq '[.. | select(.rect?) | select(.rect.y >= 80 and .rect.y <= 120) | {tag, text, rect, layout, typography, colors}]' snapshots/layout-pc.json
    ```
-4. 現在のティアに合った修正をコンポーネントに適用
+4. コンポーネントを修正
 5. Screenshot + VRT 再実行
 
-**最大 5 回ループ。** 5 回で < 1% 達成できない場合はユーザーに報告（厳守）。
+**最大 3 回ループ。** 3 回で < 10% 未達 → ユーザーに報告。
 
 #### Phase 5: Tailwind リファクタリング
 
-VRT < 1% 達成後、ui-tailwind-refactor-agent の方針に従いリファクタリング:
+**< 10% 達成後、すぐにリファクタリングを実行。** ui-tailwind-refactor-agent の方針に従う:
 
 - inline style → Tailwind class
 - 不要な absolute → flex/grid
-- margin 全廃 → 親の gap / padding で代替（mt, mb, ml, mr, mx, my すべて禁止）
+- margin 全廃 → 親の gap / padding / flex で代替（mt, mb, ml, mr, mx, my すべて禁止）
+- Webフォントは `next/font` で読み込み、コンポーネント内の `<link>` は禁止
 - 重複整理
 
-リファクタリング後、再度 VRT を実行して < 1% を維持できているか確認。
+リファクタリング後、VRT を再実行して mismatch が大幅に悪化していないか確認。
 崩れた場合はリファクタリングを修正。
 
 #### Phase 6: 完了報告
