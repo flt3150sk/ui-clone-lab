@@ -3,6 +3,9 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --font-orbis: "open sans", 游ゴシック体, YuGothic, "游ゴシック Medium",
+    "Yu Gothic Medium", 游ゴシック, "Yu Gothic", "ヒラギノ角ゴ Pro W3",
+    "Hiragino Kaku Gothic Pro", メイリオ, Meiryo, sans-serif;
 }
 
 @theme inline {
