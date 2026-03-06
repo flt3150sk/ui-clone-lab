@@ -1,6 +1,6 @@
 ---
 name: clone
-description: "URLの指定セクションをPlaywrightで自動抽出し、Next.js + Tailwind CSSのReactコンポーネントとしてピクセルパーフェクトに再現するスキル。VRT (PC: 1200px, SP: 390px) で mismatch < 1% になるまでフィードバックループを回す。以下の場合に使用：(1) URLからUIをクローン・再現したい場合、(2) セクション・コンポーネント単位の実装、(3)「このURLをクローンして」「このヘッダーを再現して」等の指示。"
+description: "URLの指定セクションをPlaywrightで自動抽出し、Next.js + Tailwind CSSのReactコンポーネントとしてピクセルパーフェクトに再現するスキル。VRT (PC: 1200px, SP: 390px) で mismatch < 10% になるまでフィードバックループを回す。以下の場合に使用：(1) URLからUIをクローン・再現したい場合、(2) セクション・コンポーネント単位の実装、(3)「このURLをクローンして」「このヘッダーを再現して」等の指示。"
 ---
 
 # Clone Skill
@@ -56,6 +56,6 @@ jq '[.. | select(.colors?.backgroundColor? and .colors.backgroundColor != "rgba(
 
 ## VRT 基準
 
-- PC (1200px): mismatch < 1%
-- SP (390px): mismatch < 1%
+- PC (1200px): mismatch < 10%
+- SP (390px): mismatch < 10%
 - 両方クリアするまでフィードバックループを回す

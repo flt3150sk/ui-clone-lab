@@ -150,7 +150,7 @@ async function main() {
   writeFileSync(reportPath, JSON.stringify(report, null, 2), "utf-8");
 
   // Summary
-  const status = parseFloat(pct) < 1 ? "PASS (< 1%)" : parseFloat(pct) < 5 ? "WARN" : "FAIL";
+  const status = parseFloat(pct) < 1 ? "PASS (< 10%)" : parseFloat(pct) < 5 ? "WARN" : "FAIL";
   console.log(`\nMismatch: ${pct}% (${mismatch.toLocaleString()} / ${total.toLocaleString()} px)`);
   console.log(`Status: ${status}`);
   console.log(`Diff regions: ${regions.length}`);

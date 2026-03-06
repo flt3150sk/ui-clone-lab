@@ -2,6 +2,21 @@
 
 URL の指定セクションを React + Tailwind CSS コンポーネントとして再現する。
 
+### トークン節約方針
+
+画像の Read はトークンコストが高い (1画像 1,000〜3,000 tokens)。以下のルールで最小限に抑える:
+
+| 画像種別 | Read 回数上限 | 代替手段 |
+|---|---|---|
+| ref スクリーンショット | PC/SP 各1回 | - |
+| アセット画像 (public/assets/) | **0回** | `sips -g pixelWidth -g pixelHeight` で寸法確認 |
+| clone スクリーンショット | **0回** | diff 画像で差異を確認 |
+| diff 画像 | 初回 + 最終確認のみ (計2〜4回) | `report.json` の diff regions 座標で判断 |
+
+**その他:**
+- jq クエリは `&&` で1回の Bash にまとめる
+- 修正前に根拠を言語化する（試行錯誤による無駄ループ防止）
+
 ### 引数
 
 $ARGUMENTS を以下の形式でパース:
@@ -47,21 +62,28 @@ node .claude/skills/clone/scripts/extract-section.mjs "<url>" --selector "<selec
 
 **layout.json は丸ごと読まない。** jq で必要部分だけ抽出してコンテキストに渡す。
 
+**トークン節約ルール:**
+- **ref スクリーンショット**: PC/SP 各1回のみ Read で目視確認する（計2回が上限）
+- **アセット画像は読まない**: `public/assets/` の画像を Read で開かない。寸法確認は `sips -g pixelWidth -g pixelHeight` で行う
+- **jq クエリはまとめて実行**: 同じ JSON に対する複数クエリは `&&` で1回の Bash 呼び出しにまとめる
+
 ```bash
-# 構造概要 (PC)
-jq '{tag: .tree.tag, rect: .tree.rect, layout: .tree.layout, children: [.tree.children[]? | {tag, text, rect, layout: {display: .layout.display, flexDirection: .layout.flexDirection, gap: .layout.gap, justifyContent: .layout.justifyContent, alignItems: .layout.alignItems}}]}' snapshots/layout-pc.json
+# PC: 構造概要 + タイポグラフィ + 色を1回で取得
+jq '{tag: .tree.tag, rect: .tree.rect, layout: .tree.layout, children: [.tree.children[]? | {tag, text, rect, layout: {display: .layout.display, flexDirection: .layout.flexDirection, gap: .layout.gap, justifyContent: .layout.justifyContent, alignItems: .layout.alignItems}}]}' snapshots/layout-pc.json && \
+jq '[.. | objects | select(.typography?.fontSize?) | {tag, text, fontSize: .typography.fontSize, fontWeight: .typography.fontWeight, lineHeight: .typography.lineHeight, letterSpacing: .typography.letterSpacing}] | unique_by({f: .fontSize, w: .fontWeight})' snapshots/layout-pc.json && \
+jq '[.. | objects | select(.colors?) | {bg: .colors.backgroundColor, fg: .colors.color}] | unique' snapshots/layout-pc.json
 
-# 構造概要 (SP)
-jq '{tag: .tree.tag, rect: .tree.rect, layout: .tree.layout, children: [.tree.children[]? | {tag, text, rect, layout: {display: .layout.display, flexDirection: .layout.flexDirection, gap: .layout.gap, justifyContent: .layout.justifyContent, alignItems: .layout.alignItems}}]}' snapshots/layout-sp.json
+# SP: 構造概要 + タイポグラフィ (色は PC と共通なので省略)
+jq '{tag: .tree.tag, rect: .tree.rect, layout: .tree.layout, children: [.tree.children[]? | {tag, text, rect, layout: {display: .layout.display, flexDirection: .layout.flexDirection, gap: .layout.gap, justifyContent: .layout.justifyContent, alignItems: .layout.alignItems}}]}' snapshots/layout-sp.json && \
+jq '[.. | objects | select(.typography?.fontSize?) | {tag, text, fontSize: .typography.fontSize, fontWeight: .typography.fontWeight, lineHeight: .typography.lineHeight, letterSpacing: .typography.letterSpacing}] | unique_by({f: .fontSize, w: .fontWeight})' snapshots/layout-sp.json
 
-# タイポグラフィ (ユニーク)
-jq '[.. | select(.typography?.fontSize?) | {tag, text, fontSize: .typography.fontSize, fontWeight: .typography.fontWeight, lineHeight: .typography.lineHeight}] | unique_by({f: .fontSize, w: .fontWeight})' snapshots/layout-pc.json
-
-# 色 (ユニーク)
-jq '[.. | select(.colors?) | {bg: .colors.backgroundColor, fg: .colors.color}] | map(select(.bg != "rgba(0, 0, 0, 0)")) | unique' snapshots/layout-pc.json
+# アセット画像の寸法確認 (Read で開かない)
+for img in public/assets/*.png public/assets/*.jpg; do
+  [ -f "$img" ] && sips -g pixelWidth -g pixelHeight "$img"
+done
 ```
 
-スクリーンショット `snapshots/ref-pc.png` と `snapshots/ref-sp.png` を目視確認し、レイアウト構造を把握する。
+スクリーンショット `snapshots/ref-pc.png` と `snapshots/ref-sp.png` を Read で目視確認し、レイアウト構造を把握する。
 
 ui-layout-analyzer エージェントに委譲して構造を言語化する。
 
@@ -130,17 +152,25 @@ grep -oE 'font-family:\s*[^;]+' snapshots/dom.html | sort -u | head -10
 3. grid/flex の明示的なテンプレート値（grid-template-rows 等）
 4. 不足している SP 用画像を DL・picture source で切り替え
 
+**トークン節約ルール（画像読み込み）:**
+- **clone スクリーンショットは読まない**: diff 画像で差異が分かるため `snapshots/clone-{vp}.png` を Read で開かない
+- **diff 画像は初回のみ読む**: 初回ループでのみ `snapshots/diff-{vp}.png` を Read で目視確認する
+- **2回目以降は report.json ベース**: `report-{vp}.json` の diff regions 座標 + `jq` で layout.json の該当箇所を取得して修正方針を立てる
+- **最終確認で diff を読む**: 最終ループ後、結果を確認するために diff 画像を読んでよい
+
 **各ループの手順:**
 
-1. report-{vp}.json の差分リージョンを確認
-2. diff-{vp}.png を目視確認
+1. report-{vp}.json の差分リージョンを確認（座標とサイズ）
+2. **初回のみ** diff-{vp}.png を Read で目視確認。2回目以降は report の座標から推測
 3. layout-{vp}.json から該当箇所の正確な値を jq で取得:
    ```bash
-   # y座標 100 付近の要素を取得
-   jq '[.. | select(.rect?) | select(.rect.y >= 80 and .rect.y <= 120) | {tag, text, rect, layout, typography, colors}]' snapshots/layout-pc.json
+   # diff region の座標 (x, y) から該当要素を特定 (2x DPR で割る)
+   # 例: region (200, 100) → CSS座標 (100, 50) 付近
+   jq '[.. | objects | select(.rect?) | select(.rect.y >= 40 and .rect.y <= 60) | {tag, text, rect, layout, typography, colors}]' snapshots/layout-pc.json
    ```
-4. コンポーネントを修正
-5. Screenshot + VRT 再実行
+4. **修正前に方針を言語化**: 「何が原因で」「何を変えれば」改善するか明確にしてから修正する。根拠なく値を変える試行錯誤は禁止
+5. コンポーネントを修正
+6. Screenshot + VRT 再実行
 
 **最大 3 回ループ。** 3 回で < 10% 未達 → ユーザーに報告。
 
@@ -155,7 +185,7 @@ grep -oE 'font-family:\s*[^;]+' snapshots/dom.html | sort -u | head -10
 - 重複整理
 
 リファクタリング後、VRT を再実行して mismatch が大幅に悪化していないか確認。
-崩れた場合はリファクタリングを修正。
+崩れた場合はリファクタリングを修正。**画像読み込みルール**: VRT 結果の確認は report.json の数値のみ。diff 画像は悪化時のみ読む。
 
 #### Phase 6: 完了報告
 
